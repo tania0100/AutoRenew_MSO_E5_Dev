@@ -8,11 +8,7 @@ import random
 # user: User.Read.All、User.ReadWrite.All、Directory.Read.All、Directory.ReadWrite.All
 # mail: Mail.Read、Mail.ReadWrite、MailboxSettings.Read、MailboxSettings.ReadWrite
 # After registration, you must click on behalf of xxx to grant administrator consent, otherwise outlook api cannot be called
-
-
-
-
-
+# Note: Added Directory.Read.All for subscription monitoring
 
 calls = [
     'https://graph.microsoft.com/v1.0/me/drive/root',
@@ -53,18 +49,49 @@ def get_access_token(refresh_token, client_id, client_secret):
     access_token = jsontxt['access_token']
     return access_token
 
-def main():
-    random.shuffle(calls)
-    endpoints = calls[random.randint(0,10)::]
-    access_token = get_access_token(refresh_token, client_id, client_secret)
+def monitor_expiry(access_token):
     session = requests.Session()
     session.headers.update({
         'Authorization': access_token,
         'Content-Type': 'application/json'
     })
+    endpoint = 'https://graph.microsoft.com/beta/directory/subscriptions'
+    try:
+        response = session.get(endpoint)
+        if response.status_code == 200:
+            subscriptions = response.json().get('value', [])
+            developer_sku_id = 'c42b9cae-ea4f-4ab7-9717-81576235ccac'  # SKU ID for Microsoft 365 E5 Developer
+            for sub in subscriptions:
+                if sub.get('skuId') == developer_sku_id:
+                    expiry_date = sub.get('nextLifecycleDateTime')
+                    print(f"Subscription Expiry/Renewal Date: {expiry_date}")
+                    return expiry_date
+            print("Developer subscription not found.")
+        else:
+            print(f"Failed to fetch subscriptions: {response.status_code} - {response.text}")
+    except requests.exceptions.RequestException as e:
+        print(e)
+
+def main():
+    access_token = get_access_token(refresh_token, client_id, client_secret)
+    
+    # Monitor expiry before running calls
+    monitor_expiry(access_token)
+    
+    session = requests.Session()
+    session.headers.update({
+        'Authorization': access_token,
+        'Content-Type': 'application/json'
+    })
+    
+    # Reduce aggression: Select only 4-6 random endpoints
+    endpoints = random.sample(calls, random.randint(4, 6))
+    
     num = 0
     for endpoint in endpoints:
         try:
+            # Add variable sleep delay (5-10 seconds) to reduce aggression
+            time.sleep(random.uniform(5, 10))
             response = session.get(endpoint)
             if response.status_code == 200:
                 num += 1
@@ -72,9 +99,10 @@ def main():
         except requests.exceptions.RequestException as e:
             print(e)
             pass
+    
     localtime = time.asctime(time.localtime(time.time()))
     print('The end of this run is :', localtime)
     print('Number of calls is :', str(len(endpoints)))
 
-for _ in range(3):
-    main()
+# Reduced outer loop to 1 run for less aggression; run manually/infrequently (e.g., once a week)
+main()
